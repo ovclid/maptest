@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>구역 지도 – 카카오맵</title>
+  <title>시장별 구역 지도 – 카카오맵</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     html, body { height: 100%; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Noto Sans KR", sans-serif; }
@@ -58,7 +58,7 @@
       position: absolute;
       top: 70px;
       right: 12px;
-      width: 280px;
+      width: 300px;
       max-height: calc(100% - 90px);
       overflow-y: auto;
       z-index: 10;
@@ -72,6 +72,17 @@
       padding: 14px 16px 8px;
       font-size: 14px;
       border-bottom: 1px solid #eee;
+      position: sticky;
+      top: 0;
+      background: #fff;
+    }
+    .zone-group {
+      padding: 8px 16px 4px;
+      font-size: 12px;
+      font-weight: 700;
+      color: #555;
+      background: #f7f8fa;
+      border-bottom: 1px solid #eee;
     }
     .zone-item {
       padding: 10px 16px;
@@ -79,16 +90,26 @@
       cursor: pointer;
       font-size: 13px;
       transition: background 0.12s;
+      display: flex;
+      align-items: flex-start;
+      gap: 8px;
     }
     .zone-item:hover { background: #f7f9fc; }
+    .zone-item .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-top: 4px;
+      flex-shrink: 0;
+    }
     .zone-item .addr { color: #222; font-weight: 500; }
     .zone-item .meta { color: #888; font-size: 11px; margin-top: 2px; }
 
     .info-window {
       padding: 8px 12px;
       font-size: 13px;
-      line-height: 1.4;
-      min-width: 140px;
+      line-height: 1.45;
+      min-width: 150px;
     }
     .info-window strong { display: block; margin-bottom: 2px; }
     .info-window .sub { color: #666; font-size: 12px; }
@@ -105,8 +126,36 @@
       border-radius: 20px;
       font-size: 13px;
       display: none;
+      max-width: 90%;
+      text-align: center;
     }
     .status.show { display: block; }
+
+    .legend {
+      position: absolute;
+      bottom: 16px;
+      left: 12px;
+      z-index: 10;
+      background: rgba(255,255,255,0.95);
+      border-radius: 10px;
+      box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+      padding: 10px 14px;
+      font-size: 12px;
+      display: none;
+    }
+    .legend.show { display: block; }
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin: 4px 0;
+    }
+    .legend-swatch {
+      width: 14px;
+      height: 14px;
+      border-radius: 3px;
+      border: 1px solid rgba(0,0,0,0.15);
+    }
 
     @media (max-width: 600px) {
       .sidebar { width: calc(100% - 24px); right: 12px; left: 12px; }
@@ -118,15 +167,11 @@
 
   <div class="toolbar">
     <div class="panel">
-      <span class="title">📍 구역 지도</span>
+      <span class="title">📍 시장별 구역 지도</span>
       <span class="count" id="zoneCount">로딩 중…</span>
     </div>
     <button class="btn secondary" id="btnList" type="button">목록</button>
     <button class="btn secondary" id="btnFit" type="button">전체 보기</button>
-    <label class="btn secondary" style="cursor:pointer; margin:0;">
-      파일 추가
-      <input type="file" id="fileInput" accept=".txt,.json,.geojson" multiple hidden />
-    </label>
   </div>
 
   <div class="sidebar" id="sidebar">
@@ -134,91 +179,92 @@
     <div id="zoneList"></div>
   </div>
 
+  <div class="legend" id="legend"></div>
   <div class="status" id="status"></div>
+
+  <!-- SheetJS (엑셀 파싱) -->
+  <script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 
   <!--
     ★ 카카오맵 API 키를 아래에 넣어주세요.
-    https://developers.kakao.com/ 에서 앱 등록 후 JavaScript 키 발급
+    https://developers.kakao.com/ → JavaScript 키
   -->
-  <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=56dd36038680e4d6f7b1cbc67b011a06&autoload=false"></script>
+  <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=YOUR_KAKAO_APP_KEY&autoload=false"></script>
 
   <script>
     // ============================================================
-    // ★ data/ 폴더에 있는 파일 이름을 여기에 적어주세요.
-    //    새 파일을 추가할 때마다 이 배열에 파일명만 추가하면 됩니다.
-    //    (브라우저 보안상 폴더 목록을 자동으로 가져올 수 없습니다)
+    // ★ 같은 폴더(또는 아래 경로)에 있는 엑셀 파일을 자동으로 읽습니다.
+    //    파일명/경로만 바꾸면 됩니다. 파일 선택 버튼 없음.
     // ============================================================
-    const DATA_FILES = [
-      '대평동 668.txt',
-      '대평동 700.txt',
-      '대평동 704.txt',
+    const EXCEL_URL = './양식_결과.xlsx';
+
+    const MARKET_COLORS = [
+      { stroke: '#004c80', fill: '#00a0e9' },
+      { stroke: '#1a7a3a', fill: '#2ecc71' },
+      { stroke: '#8b4513', fill: '#e67e22' },
+      { stroke: '#6c3483', fill: '#9b59b6' },
+      { stroke: '#922b21', fill: '#e74c3c' },
+      { stroke: '#1a5276', fill: '#3498db' },
+      { stroke: '#7d3c98', fill: '#af7ac5' },
+      { stroke: '#117a65', fill: '#1abc9c' },
     ];
 
-    const DATA_BASE = './data/';
-
-    // ---------- 스타일 ----------
-    const POLYGON_STYLE = {
-      strokeWeight: 2,
-      strokeColor: '#004c80',
-      strokeOpacity: 0.85,
-      fillColor: '#00a0e9',
-      fillOpacity: 0.28
-    };
-    const HIGHLIGHT_STYLE = {
-      strokeWeight: 3,
-      strokeColor: '#e74c3c',
-      strokeOpacity: 1,
-      fillColor: '#e74c3c',
-      fillOpacity: 0.35
-    };
-
-    // ---------- 상태 ----------
     let map = null;
     let mapData = [];
     let polygons = [];
     let markers = [];
     let infoWindows = [];
     let bounds = null;
+    let marketColorMap = {};
 
-    // ============================================================
-    // GeoJSON → 카카오맵용 객체 변환
-    // ============================================================
-    function makeAddress(props) {
-      const area1 = (props.area1 || '').replace(/__/g, ' ').trim();
-      const bon = props.bon;
-      const bu = props.bu || 0;
-      if (bon == null) return area1 || '주소 정보 없음';
-      if (bu && Number(bu) !== 0) return (area1 + ' ' + bon + '-' + bu).trim();
-      return (area1 + ' ' + bon).trim();
+    function showStatus(msg) {
+      const el = document.getElementById('status');
+      el.textContent = msg;
+      el.classList.add('show');
+    }
+    function hideStatus() {
+      document.getElementById('status').classList.remove('show');
+    }
+    function escapeHtml(str) {
+      if (str == null) return '';
+      return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
     }
 
-    function calcCentroid(points) {
-      if (!points.length) return { lat: 0, lng: 0 };
+    function getMarketColor(marketName) {
+      if (!marketColorMap[marketName]) {
+        const idx = Object.keys(marketColorMap).length % MARKET_COLORS.length;
+        marketColorMap[marketName] = MARKET_COLORS[idx];
+      }
+      return marketColorMap[marketName];
+    }
+
+    function calcCentroid(lngLatPoints) {
+      if (!lngLatPoints.length) return { lat: 0, lng: 0 };
       let sumLat = 0, sumLng = 0;
-      for (const p of points) {
+      for (const p of lngLatPoints) {
         sumLng += p[0];
         sumLat += p[1];
       }
       return {
-        lat: sumLat / points.length,
-        lng: sumLng / points.length
+        lat: sumLat / lngLatPoints.length,
+        lng: sumLng / lngLatPoints.length
       };
     }
 
-    function extractFeature(feature, filename) {
-      const geom = feature.geometry;
-      if (!geom || !geom.coordinates) return null;
+    function geometryToPaths(geometry) {
+      if (!geometry || !geometry.coordinates) return null;
 
-      const props = feature.properties || {};
-      const type = geom.type;
+      const type = geometry.type;
       let polygonsRaw = [];
-
       if (type === 'MultiPolygon') {
-        polygonsRaw = geom.coordinates;
+        polygonsRaw = geometry.coordinates;
       } else if (type === 'Polygon') {
-        polygonsRaw = [geom.coordinates];
+        polygonsRaw = [geometry.coordinates];
       } else {
-        console.warn('지원하지 않는 geometry:', type, filename);
         return null;
       }
 
@@ -229,115 +275,110 @@
         for (const ring of polygon) {
           const kakaoRing = [];
           for (const pt of ring) {
-            if (pt.length < 2) continue;
+            if (!pt || pt.length < 2) continue;
             const lng = Number(pt[0]);
             const lat = Number(pt[1]);
+            if (isNaN(lng) || isNaN(lat)) continue;
             kakaoRing.push([lat, lng]);
             allPoints.push([lng, lat]);
           }
-          if (kakaoRing.length) paths.push(kakaoRing);
+          if (kakaoRing.length >= 3) paths.push(kakaoRing);
         }
       }
 
       if (!paths.length) return null;
-
       const center = calcCentroid(allPoints);
-      const name = filename.replace(/\.(txt|json|geojson)$/i, '');
-
       return {
-        name: name,
-        address: makeAddress(props),
-        pnucode: props.pnucode || '',
-        admcode: props.admcode || '',
-        jimok: props.jimok || '',
-        bon: props.bon,
-        bu: props.bu || 0,
-        area1: props.area1 || '',
+        paths: paths,
         center: {
           lat: Math.round(center.lat * 1e8) / 1e8,
           lng: Math.round(center.lng * 1e8) / 1e8
-        },
-        paths: paths
+        }
       };
     }
 
-    function parseGeoJSON(text, filename) {
-      let data;
-      try {
-        data = JSON.parse(text);
-      } catch (e) {
-        console.error('JSON 파싱 실패:', filename, e);
-        return [];
+    function parseExcelWorkbook(workbook) {
+      const sheetName = workbook.SheetNames.find(function (n) {
+        return n === '시장별주소' || n.indexOf('시장별주소') >= 0;
+      }) || workbook.SheetNames[0];
+
+      const sheet = workbook.Sheets[sheetName];
+      if (!sheet) {
+        throw new Error("'시장별주소' 시트를 찾을 수 없습니다.");
       }
 
-      let features = [];
-      if (data.type === 'FeatureCollection' && Array.isArray(data.features)) {
-        features = data.features;
-      } else if (data.type === 'Feature') {
-        features = [data];
-      } else {
-        console.warn('알 수 없는 GeoJSON 형식:', filename);
-        return [];
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+      if (!rows.length) throw new Error('시트가 비어 있습니다.');
+
+      const header = rows[0].map(function (h) { return String(h).trim(); });
+      const colSeq = header.indexOf('순번');
+      const colMarket = header.indexOf('소속시장');
+      const colAddr = header.indexOf('주소');
+      const colBoundary = header.indexOf('경계좌표');
+
+      if (colAddr < 0) throw new Error("'주소' 열을 찾을 수 없습니다.");
+      if (colBoundary < 0) {
+        throw new Error("'경계좌표' 열이 없습니다. fill_boundary_from_vworld.py 로 먼저 채워 주세요.");
       }
 
-      const results = [];
-      for (const feat of features) {
-        const item = extractFeature(feat, filename);
-        if (item) results.push(item);
-      }
-      return results;
-    }
+      const items = [];
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (!row || !row.length) continue;
 
-    // ============================================================
-    // 데이터 로드
-    // ============================================================
-    async function loadFromDataFolder() {
-      if (!DATA_FILES.length) {
-        showStatus('DATA_FILES 배열이 비어 있습니다. index.html에서 파일명을 추가하세요.');
-        return [];
-      }
+        const addr = String(row[colAddr] || '').trim();
+        const boundaryRaw = String(row[colBoundary] || '').trim();
+        const market = colMarket >= 0 ? String(row[colMarket] || '').trim() : '';
+        const seq = colSeq >= 0 ? row[colSeq] : i;
 
-      showStatus(DATA_FILES.length + '개 파일 로딩 중…');
+        if (!addr && !boundaryRaw) continue;
 
-      const results = [];
-      const tasks = DATA_FILES.map(async function (filename) {
-        const url = DATA_BASE + encodeURIComponent(filename);
-        try {
-          const res = await fetch(url);
-          if (!res.ok) throw new Error('HTTP ' + res.status);
-          const text = await res.text();
-          return parseGeoJSON(text, filename);
-        } catch (e) {
-          console.error('파일 로드 실패: ' + filename, e);
-          showStatus('로드 실패: ' + filename);
-          return [];
+        let geometry = null;
+        if (boundaryRaw) {
+          try {
+            geometry = JSON.parse(boundaryRaw);
+          } catch (e) {
+            console.warn('경계좌표 JSON 파싱 실패 (행 ' + (i + 1) + '):', e);
+          }
         }
-      });
 
-      const all = await Promise.all(tasks);
-      for (const items of all) {
-        for (const item of items) results.push(item);
-      }
-      return results;
-    }
-
-    async function loadFromFileInput(fileList) {
-      const results = [];
-      for (const file of fileList) {
-        try {
-          const text = await file.text();
-          const items = parseGeoJSON(text, file.name);
-          for (const item of items) results.push(item);
-        } catch (e) {
-          console.error('파일 읽기 실패:', file.name, e);
+        if (!geometry) {
+          console.warn('경계좌표 없음 → 건너뜀: ' + addr);
+          continue;
         }
+
+        const converted = geometryToPaths(geometry);
+        if (!converted) {
+          console.warn('geometry 변환 실패: ' + addr);
+          continue;
+        }
+
+        items.push({
+          seq: seq,
+          market: market,
+          address: addr,
+          name: market ? (market + ' · ' + addr) : addr,
+          center: converted.center,
+          paths: converted.paths,
+          color: getMarketColor(market || addr)
+        });
       }
-      return results;
+
+      return items;
     }
 
-    // ============================================================
-    // 지도 그리기
-    // ============================================================
+    /** 서버(또는 로컬 http 서버)에서 엑셀을 fetch 로 자동 로드 */
+    async function loadExcelFromUrl(url) {
+      showStatus('엑셀 로딩 중… (' + url + ')');
+      const res = await fetch(url);
+      if (!res.ok) {
+        throw new Error('파일을 가져올 수 없습니다 (HTTP ' + res.status + '). 경로: ' + url);
+      }
+      const buffer = await res.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      return parseExcelWorkbook(workbook);
+    }
+
     function clearMapObjects() {
       polygons.forEach(function (p) { p.setMap(null); });
       markers.forEach(function (m) { m.setMap(null); });
@@ -352,18 +393,22 @@
       clearMapObjects();
 
       if (!mapData.length) {
-        document.getElementById('zoneCount').textContent = '구역 없음';
+        document.getElementById('zoneCount').textContent = '표시할 구역 없음';
+        document.getElementById('legend').classList.remove('show');
         return;
       }
 
-      mapData.forEach(function (item, idx) { drawZone(item, idx); });
+      mapData.forEach(function (item, idx) {
+        drawZone(item, idx);
+      });
 
       if (!bounds.isEmpty()) {
         map.setBounds(bounds, 40, 40, 40, 40);
       }
 
-      document.getElementById('zoneCount').textContent = mapData.length + '개 구역';
+      document.getElementById('zoneCount').textContent = mapData.length + '개 필지';
       buildSidebar();
+      buildLegend();
       hideStatus();
     }
 
@@ -373,9 +418,18 @@
       });
       path.forEach(function (ll) { bounds.extend(ll); });
 
-      const polygon = new kakao.maps.Polygon(Object.assign({ path: path }, POLYGON_STYLE));
+      const style = {
+        strokeWeight: 2,
+        strokeColor: item.color.stroke,
+        strokeOpacity: 0.9,
+        fillColor: item.color.fill,
+        fillOpacity: 0.32
+      };
+
+      const polygon = new kakao.maps.Polygon(Object.assign({ path: path }, style));
       polygon.setMap(map);
       polygons.push(polygon);
+      polygon.__baseStyle = style;
 
       const position = new kakao.maps.LatLng(item.center.lat, item.center.lng);
       const marker = new kakao.maps.Marker({
@@ -388,9 +442,9 @@
       const content =
         '<div class="info-window">' +
           '<strong>' + escapeHtml(item.address) + '</strong>' +
-          '<div class="sub">' + escapeHtml(item.name) +
-            (item.jimok ? ' · ' + escapeHtml(item.jimok) : '') +
-          '</div>' +
+          (item.market
+            ? '<div class="sub">' + escapeHtml(item.market) + '</div>'
+            : '') +
         '</div>';
 
       const infowindow = new kakao.maps.InfoWindow({
@@ -414,7 +468,21 @@
 
     function highlightPolygon(activeIdx) {
       polygons.forEach(function (poly, i) {
-        poly.setOptions(i === activeIdx ? HIGHLIGHT_STYLE : POLYGON_STYLE);
+        if (i === activeIdx) {
+          poly.setOptions({
+            strokeWeight: 3,
+            strokeColor: '#c0392b',
+            strokeOpacity: 1,
+            fillColor: '#e74c3c',
+            fillOpacity: 0.4
+          });
+        } else {
+          poly.setOptions(poly.__baseStyle || {
+            strokeWeight: 2,
+            strokeOpacity: 0.9,
+            fillOpacity: 0.32
+          });
+        }
       });
     }
 
@@ -425,47 +493,64 @@
     function buildSidebar() {
       const list = document.getElementById('zoneList');
       list.innerHTML = '';
+
+      const groups = {};
       mapData.forEach(function (item, idx) {
-        const div = document.createElement('div');
-        div.className = 'zone-item';
-        div.innerHTML =
-          '<div class="addr">' + escapeHtml(item.address) + '</div>' +
-          '<div class="meta">' + escapeHtml(item.name) +
-            (item.jimok ? ' · ' + escapeHtml(item.jimok) : '') +
-          '</div>';
-        div.addEventListener('click', function () {
-          const pos = new kakao.maps.LatLng(item.center.lat, item.center.lng);
-          map.setLevel(3);
-          map.panTo(pos);
-          closeAllInfoWindows();
-          infoWindows[idx].open(map, markers[idx]);
-          highlightPolygon(idx);
+        const key = item.market || '(미분류)';
+        if (!groups[key]) groups[key] = [];
+        groups[key].push({ item: item, idx: idx });
+      });
+
+      Object.keys(groups).forEach(function (market) {
+        const groupTitle = document.createElement('div');
+        groupTitle.className = 'zone-group';
+        groupTitle.textContent = market + ' (' + groups[market].length + ')';
+        list.appendChild(groupTitle);
+
+        groups[market].forEach(function (entry) {
+          const item = entry.item;
+          const idx = entry.idx;
+          const div = document.createElement('div');
+          div.className = 'zone-item';
+          div.innerHTML =
+            '<span class="dot" style="background:' + item.color.fill + ';border-color:' + item.color.stroke + '"></span>' +
+            '<div>' +
+              '<div class="addr">' + escapeHtml(item.address) + '</div>' +
+              '<div class="meta">순번 ' + escapeHtml(item.seq) + '</div>' +
+            '</div>';
+          div.addEventListener('click', function () {
+            const pos = new kakao.maps.LatLng(item.center.lat, item.center.lng);
+            map.setLevel(3);
+            map.panTo(pos);
+            closeAllInfoWindows();
+            infoWindows[idx].open(map, markers[idx]);
+            highlightPolygon(idx);
+          });
+          list.appendChild(div);
         });
-        list.appendChild(div);
       });
     }
 
-    function escapeHtml(str) {
-      if (!str) return '';
-      return String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-    }
-
-    function showStatus(msg) {
-      const el = document.getElementById('status');
-      el.textContent = msg;
+    function buildLegend() {
+      const el = document.getElementById('legend');
+      const markets = Object.keys(marketColorMap);
+      if (!markets.length) {
+        el.classList.remove('show');
+        return;
+      }
+      el.innerHTML = '<div style="font-weight:700;margin-bottom:6px;">소속시장</div>';
+      markets.forEach(function (name) {
+        const c = marketColorMap[name];
+        const row = document.createElement('div');
+        row.className = 'legend-item';
+        row.innerHTML =
+          '<span class="legend-swatch" style="background:' + c.fill + ';border-color:' + c.stroke + '"></span>' +
+          '<span>' + escapeHtml(name) + '</span>';
+        el.appendChild(row);
+      });
       el.classList.add('show');
     }
-    function hideStatus() {
-      document.getElementById('status').classList.remove('show');
-    }
 
-    // ============================================================
-    // 초기화
-    // ============================================================
     async function initMap() {
       map = new kakao.maps.Map(document.getElementById('map'), {
         center: new kakao.maps.LatLng(36.48, 127.28),
@@ -473,12 +558,20 @@
       });
       bounds = new kakao.maps.LatLngBounds();
 
-      const items = await loadFromDataFolder();
-      mapData = items;
-      drawAllZones();
-
-      if (!mapData.length) {
-        showStatus('표시할 구역이 없습니다. DATA_FILES를 확인하거나 "파일 추가"를 사용하세요.');
+      try {
+        const items = await loadExcelFromUrl(EXCEL_URL);
+        mapData = items;
+        drawAllZones();
+        if (!items.length) {
+          showStatus('경계좌표가 채워진 행이 없습니다. fill_boundary_from_vworld.py 를 먼저 실행하세요.');
+        }
+      } catch (err) {
+        console.error(err);
+        document.getElementById('zoneCount').textContent = '엑셀 로드 실패';
+        showStatus(
+          '엑셀 로드 실패: ' + (err.message || err) +
+          '  → HTML과 양식_결과.xlsx 를 같은 폴더에 두고, 로컬 서버로 여세요. (python -m http.server 8080)'
+        );
       }
     }
 
@@ -492,23 +585,6 @@
         closeAllInfoWindows();
         highlightPolygon(-1);
       }
-    });
-
-    document.getElementById('fileInput').addEventListener('change', async function (e) {
-      const files = e.target.files;
-      if (!files || !files.length) return;
-
-      showStatus(files.length + '개 파일 처리 중…');
-      const items = await loadFromFileInput(files);
-      if (items.length) {
-        mapData = mapData.concat(items);
-        drawAllZones();
-        showStatus(items.length + '개 구역 추가됨 (총 ' + mapData.length + '개)');
-        setTimeout(hideStatus, 2500);
-      } else {
-        showStatus('추가된 구역이 없습니다.');
-      }
-      e.target.value = '';
     });
 
     kakao.maps.load(initMap);
